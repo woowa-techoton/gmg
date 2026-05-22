@@ -45,3 +45,13 @@ npm run dev
 ## 문서
 
 구현 기준 문서는 [docs/README.md](./docs/README.md)에서 읽는 순서를 확인할 수 있습니다.
+
+## 멤버
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/2Jaeheon"><img src="https://github.com/2Jaeheon.png" width="200px;" alt=""/><br /><sub><b>초록</b></sub></a></td>
+    <td align="center"><a href="https://github.com/sangjun121"><img src="https://github.com/sangjun121.png" width="200px;" alt=""/><br /><sub><b>샤를</b></sub></a></td>
+    <td align="center"><a href="https://github.com/Jihyun3478"><img src="https://github.com/Jihyun3478.png" width="200px;" alt=""/><br /><sub><b>로지</b></sub></a></td>
+    <td align="center"><a href="https://github.com/RealTake"><img src="https://github.com/RealTake.png" width="200px;" alt=""/><br /><sub><b>에덴</b></sub></a></td>
+    </tr>
+</table>
