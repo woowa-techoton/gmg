@@ -1,0 +1,46 @@
+{
+  "_metadata": {
+    "major_version": 1
+  },
+  "display_information": {
+    "name": "GMG",
+    "description": "Create and join ad-hoc gatherings in Slack.",
+    "background_color": "#1f7a5c"
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "GMG",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/gmg",
+        "description": "Create a GMG gathering",
+        "usage_hint": "open the meeting modal",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": ["commands", "chat:write"]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": true
+    },
+    "event_subscriptions": {
+      "bot_events": ["app_home_opened"]
+    },
+    "is_hosted": false,
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
