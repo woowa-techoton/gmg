@@ -60,6 +60,7 @@ describe("Slack platform contract", () => {
     expect(rendered).toContain(CREATE_MODAL_FIELD_IDS.meetingMinute.blockId);
     expect(rendered).toContain(CREATE_MODAL_FIELD_IDS.deadlineMinute.blockId);
     expect(rendered).toContain('"value":"05"');
+    expect(rendered.match(/"initial_date":"2026-05-22"/g)).toHaveLength(2);
     expect(rendered).not.toContain('"type":"timepicker"');
   });
 
@@ -120,6 +121,7 @@ describe("Slack platform contract", () => {
     expect(meeting.sourceChannelId).toBe("CSOURCE");
     expect(meeting.meetingTime).toBe("2026-05-22T11:35:00.000Z");
     expect(meeting.deadline).toBe("2026-05-22T10:05:00.000Z");
+    expect(meeting.capacity).toBe(4);
     expect(meeting.announcementMessageTs).toBe("1716372000.000100");
     expect(meeting.creatorControlsChannelId).toBe("DAPP");
     expect(meeting.creatorControlsMessageTs).toBe("1716372000.000200");
@@ -501,6 +503,7 @@ describe("Slack platform contract", () => {
     expect(rendered).toContain(CREATE_HOME_FIELD_IDS.meetingDate.blockId);
     expect(rendered).toContain(CREATE_HOME_FIELD_IDS.deadlineDate.blockId);
     expect(rendered).not.toContain(CREATE_MODAL_FIELD_IDS.meetingDate.blockId);
+    expect(rendered.match(/"initial_date":"2026-05-22"/g)).toHaveLength(2);
     expect(rendered).toContain(ACTION_IDS.app_home.submit_meeting);
     expect(rendered).not.toContain(ACTION_IDS.app_home.create_meeting);
   });
@@ -561,6 +564,7 @@ describe("Slack platform contract", () => {
     const [meeting] = await store.list();
     expect(meeting.creatorUserId).toBe("UHOME");
     expect(meeting.sourceChannelId).toBe("APP_HOME");
+    expect(meeting.capacity).toBe(4);
     expect(meeting.announcementMessageTs).toBe("1716372000.000100");
     expect(meeting.creatorControlsChannelId).toBe("DAPP");
   });
@@ -762,6 +766,53 @@ describe("Slack platform contract", () => {
     expect(rendered).toContain(meeting.id);
   });
 
+  it("styles only the selected user's current participant button", async () => {
+    const message = buildAnnouncementMessage(meetingFixture(), {
+      selectedUserId: "U3"
+    });
+    const buttons = participantButtons(message);
+
+    expect(buttons.get(ACTION_IDS.participant.GMG)).not.toHaveProperty("style");
+    expect(buttons.get(ACTION_IDS.participant.late_join)).not.toHaveProperty(
+      "style"
+    );
+    expect(buttons.get(ACTION_IDS.participant.considering)).toMatchObject({
+      style: "primary"
+    });
+    expect(buttons.get(ACTION_IDS.participant.not_attending)).not.toHaveProperty(
+      "style"
+    );
+    expect(buttons.get(ACTION_IDS.participant.cancel_response)).not.toHaveProperty(
+      "style"
+    );
+  });
+
+  it("uses the same green selected style even when the selected status is not attending", async () => {
+    const message = buildAnnouncementMessage(meetingFixture(), {
+      selectedUserId: "U4"
+    });
+    const buttons = participantButtons(message);
+
+    expect(buttons.get(ACTION_IDS.participant.GMG)).not.toHaveProperty("style");
+    expect(buttons.get(ACTION_IDS.participant.late_join)).not.toHaveProperty(
+      "style"
+    );
+    expect(buttons.get(ACTION_IDS.participant.considering)).not.toHaveProperty(
+      "style"
+    );
+    expect(buttons.get(ACTION_IDS.participant.not_attending)).toMatchObject({
+      style: "primary"
+    });
+  });
+
+  it("leaves participant buttons unstyled when no selected user is provided", async () => {
+    const message = buildAnnouncementMessage(meetingFixture());
+
+    for (const button of participantButtons(message).values()) {
+      expect(button).not.toHaveProperty("style");
+    }
+  });
+
   it("builds creator-only controls with manual confirmation and cancellation actions", async () => {
     const meeting = meetingFixture();
 
@@ -786,6 +837,15 @@ describe("Slack platform contract", () => {
     expect(rendered).not.toContain(ACTION_IDS.creator.cancel_meeting);
   });
 
+  it("emphasizes key announcement metadata values", async () => {
+    const message = buildAnnouncementMessage(meetingFixture());
+    const rendered = JSON.stringify(message.blocks);
+
+    expect(rendered).toContain("*[회식]*");
+    expect(rendered).toContain("*[모집 중]*");
+    expect(rendered).toContain("*[<@UCREATOR>]*");
+  });
+
   it("builds App Home views with an embedded create form and no public creator actions", async () => {
     const view = buildHomeView("UCREATOR", [meetingFixture()]);
     const rendered = JSON.stringify(view);
@@ -794,6 +854,29 @@ describe("Slack platform contract", () => {
     expect(rendered).toContain(CREATE_MODAL_FIELD_IDS.title.blockId);
     expect(rendered).toContain(CREATE_HOME_FIELD_IDS.meetingDate.blockId);
     expect(rendered).toContain(CREATE_HOME_FIELD_IDS.deadlineDate.blockId);
+    expect(rendered).toContain(CREATE_HOME_FIELD_IDS.capacityMode.blockId);
+    expect(rendered).toContain(CREATE_HOME_FIELD_IDS.capacity.actionId);
+    const blocks = view.blocks as Array<{
+      block_id?: string;
+      elements?: Array<{ action_id?: string; type?: string }>;
+      type?: string;
+    }>;
+    const capacityRow = blocks.find(
+      (block) => block.block_id === CREATE_HOME_FIELD_IDS.capacityMode.blockId
+    );
+    expect(capacityRow).toMatchObject({
+      type: "actions",
+      elements: [
+        {
+          action_id: CREATE_HOME_FIELD_IDS.capacityMode.actionId,
+          type: "static_select"
+        },
+        {
+          action_id: CREATE_HOME_FIELD_IDS.capacity.actionId,
+          type: "static_select"
+        }
+      ]
+    });
     expect(rendered).not.toContain(CREATE_MODAL_FIELD_IDS.deadlineDate.blockId);
     expect(rendered).toContain(ACTION_IDS.app_home.submit_meeting);
     expect(rendered).not.toContain(ACTION_IDS.app_home.create_meeting);
@@ -931,13 +1014,13 @@ describe("Slack platform contract", () => {
               selected_option: { value: meetingTime.minute }
             }
           },
-          [CREATE_MODAL_FIELD_IDS.capacityMode.blockId]: {
-            [CREATE_MODAL_FIELD_IDS.capacityMode.actionId]: {
+          [CREATE_HOME_FIELD_IDS.capacityMode.blockId]: {
+            [CREATE_HOME_FIELD_IDS.capacityMode.actionId]: {
               selected_option: { value: "limited" }
+            },
+            [CREATE_HOME_FIELD_IDS.capacity.actionId]: {
+              selected_option: { value: "4" }
             }
-          },
-          [CREATE_MODAL_FIELD_IDS.capacity.blockId]: {
-            [CREATE_MODAL_FIELD_IDS.capacity.actionId]: { value: "4" }
           },
           [CREATE_HOME_FIELD_IDS.deadlineDate.blockId]: {
             [CREATE_HOME_FIELD_IDS.deadlineDate.actionId]: {
@@ -983,4 +1066,17 @@ function meetingFixture(): Meeting {
     createdAt: "2026-05-22T09:00:00.000Z",
     updatedAt: "2026-05-22T09:00:00.000Z"
   };
+}
+
+function participantButtons(
+  message: ReturnType<typeof buildAnnouncementMessage>
+): Map<string | undefined, { action_id?: string; style?: string }> {
+  const actionsBlock = message.blocks.find((block) => block.type === "actions") as
+    | { elements?: Array<{ action_id?: string; style?: string }> }
+    | undefined;
+
+  expect(actionsBlock?.elements).toBeDefined();
+  return new Map(
+    actionsBlock?.elements?.map((element) => [element.action_id, element]) ?? []
+  );
 }

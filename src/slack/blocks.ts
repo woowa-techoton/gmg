@@ -6,6 +6,16 @@ export interface SlackMessagePayload {
   blocks: Array<Record<string, unknown>>;
 }
 
+export interface CreateMeetingFormOptions {
+  now?: Date;
+  timezoneOffset?: string;
+}
+
+interface CreateMeetingFormDefaults {
+  meetingDate?: string;
+  deadlineDate?: string;
+}
+
 export const ACTION_IDS = {
   participant: {
     GMG: "gmg_participant_GMG",
@@ -67,6 +77,14 @@ export const CREATE_HOME_FIELD_IDS = {
   deadlineMinute: {
     blockId: "gmg_home_deadline_when_block",
     actionId: CREATE_MODAL_FIELD_IDS.deadlineMinute.actionId
+  },
+  capacityMode: {
+    blockId: "gmg_home_capacity_block",
+    actionId: CREATE_MODAL_FIELD_IDS.capacityMode.actionId
+  },
+  capacity: {
+    blockId: "gmg_home_capacity_block",
+    actionId: CREATE_MODAL_FIELD_IDS.capacity.actionId
   }
 } as const;
 
@@ -78,6 +96,16 @@ const hourOptions = Array.from({ length: 24 }, (_, hour) => {
 const minuteOptions = Array.from({ length: 12 }, (_, index) => {
   const value = (index * 5).toString().padStart(2, "0");
   return option(`${value}분`, value);
+});
+
+const capacityModeOptions = [
+  option("정원 있음", "limited"),
+  option("정원 없음", "unlimited")
+];
+
+const capacityCountOptions = Array.from({ length: 100 }, (_, index) => {
+  const count = (index + 1).toString();
+  return option(`${count}명`, count);
 });
 
 const statusLabels: Record<ParticipantStatus, string> = {
@@ -94,6 +122,8 @@ const participantThreadNudgeText: Record<ParticipantStatus, string> = {
   not_attending: "이걸 안 와?!"
 };
 
+type ButtonStyle = "primary" | "danger";
+
 const stateLabels: Record<MeetingState, string> = {
   open: "모집 중",
   confirmed_by_capacity: "정원 도달",
@@ -102,7 +132,10 @@ const stateLabels: Record<MeetingState, string> = {
   cancelled: "취소됨"
 };
 
-export function buildAnnouncementMessage(meeting: Meeting): SlackMessagePayload {
+export function buildAnnouncementMessage(
+  meeting: Meeting,
+  options: { selectedUserId?: string } = {}
+): SlackMessagePayload {
   const countedCount = countedParticipantIds(meeting).length;
   const capacityText =
     meeting.capacity === undefined
@@ -121,9 +154,9 @@ export function buildAnnouncementMessage(meeting: Meeting): SlackMessagePayload 
     {
       type: "section",
       fields: [
-        markdownField(`*종류*\n${meeting.type}`),
-        markdownField(`*상태*\n${stateLabels[meeting.state]}`),
-        markdownField(`*생성자*\n<@${meeting.creatorUserId}>`),
+        markdownField(`*종류*\n${emphasizedValue(meeting.type)}`),
+        markdownField(`*상태*\n${emphasizedValue(stateLabels[meeting.state])}`),
+        markdownField(`*생성자*\n${emphasizedValue(`<@${meeting.creatorUserId}>`)}`),
         markdownField(`*정원*\n${capacityText}`),
         markdownField(`*약속 시간*\n${formatSlackDate(meeting.meetingTime)}`),
         markdownField(`*마감 시간*\n${formatSlackDate(meeting.deadline)}`)
@@ -149,7 +182,7 @@ export function buildAnnouncementMessage(meeting: Meeting): SlackMessagePayload 
       ]
     });
   } else {
-    blocks.push(participantActionsBlock(meeting.id));
+    blocks.push(participantActionsBlock(meeting, options.selectedUserId));
   }
 
   return {
@@ -184,7 +217,7 @@ export function buildCreatorControlsMessage(meeting: Meeting): SlackMessagePaylo
 export function buildHomeView(
   userId: string,
   creatorMeetings: Meeting[] = [],
-  options: { formErrors?: Record<string, string> } = {}
+  options: { formErrors?: Record<string, string> } & CreateMeetingFormOptions = {}
 ): Record<string, unknown> {
   const activeMeetings = creatorMeetings
     .filter((meeting) => !isLockedState(meeting.state))
@@ -197,7 +230,7 @@ export function buildHomeView(
     section(`<@${userId}>님의 번개 모임을 빠르게 만들고 관리합니다.`),
     { type: "divider" },
     ...buildCreateMeetingErrorBlocks(options.formErrors),
-    ...buildCreateMeetingHomeBlocks(),
+    ...buildCreateMeetingHomeBlocks(options),
     {
       type: "actions",
       elements: [
@@ -223,11 +256,19 @@ export function buildHomeView(
   };
 }
 
-export function buildCreateMeetingFormBlocks(): Array<Record<string, unknown>> {
+export function buildCreateMeetingFormBlocks(
+  options: CreateMeetingFormOptions = {}
+): Array<Record<string, unknown>> {
+  const defaults = createMeetingFormDefaults(options);
+
   return [
     textInputBlock(CREATE_MODAL_FIELD_IDS.title, "모임명", "예: 저녁 번개"),
     textInputBlock(CREATE_MODAL_FIELD_IDS.type, "종류", "예: 회식, 커피, 보드게임"),
-    datePickerBlock(CREATE_MODAL_FIELD_IDS.meetingDate, "약속 날짜"),
+    datePickerBlock(
+      CREATE_MODAL_FIELD_IDS.meetingDate,
+      "약속 날짜",
+      defaults.meetingDate
+    ),
     ...timeSelectBlocks(
       CREATE_MODAL_FIELD_IDS.meetingTime,
       CREATE_MODAL_FIELD_IDS.meetingMinute,
@@ -240,14 +281,15 @@ export function buildCreateMeetingFormBlocks(): Array<Record<string, unknown>> {
       element: {
         type: "static_select",
         action_id: CREATE_MODAL_FIELD_IDS.capacityMode.actionId,
-        options: [
-          option("정원 있음", "limited"),
-          option("정원 없음", "unlimited")
-        ]
+        options: capacityModeOptions
       }
     },
     textInputBlock(CREATE_MODAL_FIELD_IDS.capacity, "정원 수", "정원 없음이면 비워두세요", true),
-    datePickerBlock(CREATE_MODAL_FIELD_IDS.deadlineDate, "마감 날짜"),
+    datePickerBlock(
+      CREATE_MODAL_FIELD_IDS.deadlineDate,
+      "마감 날짜",
+      defaults.deadlineDate
+    ),
     ...timeSelectBlocks(
       CREATE_MODAL_FIELD_IDS.deadlineTime,
       CREATE_MODAL_FIELD_IDS.deadlineMinute,
@@ -256,7 +298,11 @@ export function buildCreateMeetingFormBlocks(): Array<Record<string, unknown>> {
   ];
 }
 
-function buildCreateMeetingHomeBlocks(): Array<Record<string, unknown>> {
+function buildCreateMeetingHomeBlocks(
+  options: CreateMeetingFormOptions = {}
+): Array<Record<string, unknown>> {
+  const defaults = createMeetingFormDefaults(options);
+
   return [
     section("*새 모임 만들기*\n제목과 일정만 채우면 바로 공지할 수 있어요."),
     textInputBlock(CREATE_MODAL_FIELD_IDS.title, "모임명", "예: 저녁 번개"),
@@ -266,13 +312,15 @@ function buildCreateMeetingHomeBlocks(): Array<Record<string, unknown>> {
       CREATE_HOME_FIELD_IDS.meetingDate,
       CREATE_HOME_FIELD_IDS.meetingTime,
       CREATE_HOME_FIELD_IDS.meetingMinute,
-      "약속"
+      "약속",
+      { date: defaults.meetingDate }
     ),
     dateTimeActionsBlock(
       CREATE_HOME_FIELD_IDS.deadlineDate,
       CREATE_HOME_FIELD_IDS.deadlineTime,
       CREATE_HOME_FIELD_IDS.deadlineMinute,
-      "마감"
+      "마감",
+      { date: defaults.deadlineDate }
     ),
     {
       type: "context",
@@ -284,20 +332,7 @@ function buildCreateMeetingHomeBlocks(): Array<Record<string, unknown>> {
       ]
     },
     section("*정원*"),
-    {
-      type: "input",
-      block_id: CREATE_MODAL_FIELD_IDS.capacityMode.blockId,
-      label: { type: "plain_text", text: "정원 모드", emoji: true },
-      element: {
-        type: "static_select",
-        action_id: CREATE_MODAL_FIELD_IDS.capacityMode.actionId,
-        options: [
-          option("정원 있음", "limited"),
-          option("정원 없음", "unlimited")
-        ]
-      }
-    },
-    textInputBlock(CREATE_MODAL_FIELD_IDS.capacity, "정원 수", "정원 없음이면 비워두세요", true)
+    capacityActionsBlock(CREATE_HOME_FIELD_IDS.capacityMode, CREATE_HOME_FIELD_IDS.capacity)
   ];
 }
 
@@ -387,17 +422,35 @@ export function countedParticipantIds(meeting: Meeting): string[] {
     .sort();
 }
 
-function participantActionsBlock(meetingId: string): Record<string, unknown> {
+function participantActionsBlock(
+  meeting: Meeting,
+  selectedUserId: string | undefined
+): Record<string, unknown> {
+  const selectedStatus = selectedUserId
+    ? meeting.participants[selectedUserId]
+    : undefined;
+
   return {
     type: "actions",
     elements: [
-      button("GMG", ACTION_IDS.participant.GMG, meetingId, "primary"),
-      button("늦참", ACTION_IDS.participant.late_join, meetingId),
-      button("고민중", ACTION_IDS.participant.considering, meetingId),
-      button("불참", ACTION_IDS.participant.not_attending, meetingId),
-      button("응답 취소", ACTION_IDS.participant.cancel_response, meetingId)
+      participantButton("GMG", "GMG", meeting.id, selectedStatus),
+      participantButton("늦참", "late_join", meeting.id, selectedStatus),
+      participantButton("고민중", "considering", meeting.id, selectedStatus),
+      participantButton("불참", "not_attending", meeting.id, selectedStatus),
+      button("응답 취소", ACTION_IDS.participant.cancel_response, meeting.id)
     ]
   };
+}
+
+function participantButton(
+  text: string,
+  status: ParticipantStatus,
+  meetingId: string,
+  selectedStatus: ParticipantStatus | undefined
+): Record<string, unknown> {
+  const style = selectedStatus === status ? "primary" : undefined;
+
+  return button(text, ACTION_IDS.participant[status], meetingId, style);
 }
 
 function activeMeetingSummaryBlock(meeting: Meeting): Record<string, unknown> {
@@ -442,7 +495,7 @@ function button(
   text: string,
   actionId: string,
   value: string,
-  style?: "primary" | "danger"
+  style?: ButtonStyle
 ): Record<string, unknown> {
   return {
     type: "button",
@@ -487,7 +540,8 @@ function textInputBlock(
 
 function datePickerBlock(
   ids: { blockId: string; actionId: string },
-  label: string
+  label: string,
+  initialDate?: string
 ): Record<string, unknown> {
   return {
     type: "input",
@@ -495,7 +549,8 @@ function datePickerBlock(
     label: { type: "plain_text", text: label, emoji: true },
     element: {
       type: "datepicker",
-      action_id: ids.actionId
+      action_id: ids.actionId,
+      ...(initialDate ? { initial_date: initialDate } : {})
     }
   };
 }
@@ -515,15 +570,30 @@ function dateTimeActionsBlock(
   dateIds: { blockId: string; actionId: string },
   hourIds: { blockId: string; actionId: string },
   minuteIds: { blockId: string; actionId: string },
-  label: string
+  label: string,
+  defaults: { date?: string; hour?: string; minute?: string } = {}
 ): Record<string, unknown> {
   return {
     type: "actions",
     block_id: dateIds.blockId,
     elements: [
-      datePickerElement(dateIds, `${label} 날짜`),
-      staticSelectElement(hourIds, "시", hourOptions),
-      staticSelectElement(minuteIds, "분", minuteOptions)
+      datePickerElement(dateIds, `${label} 날짜`, defaults.date),
+      staticSelectElement(hourIds, "시", hourOptions, defaults.hour),
+      staticSelectElement(minuteIds, "분", minuteOptions, defaults.minute)
+    ]
+  };
+}
+
+function capacityActionsBlock(
+  modeIds: { blockId: string; actionId: string },
+  capacityIds: { actionId: string }
+): Record<string, unknown> {
+  return {
+    type: "actions",
+    block_id: modeIds.blockId,
+    elements: [
+      staticSelectElement(modeIds, "정원 모드", capacityModeOptions),
+      staticSelectElement(capacityIds, "정원 수", capacityCountOptions)
     ]
   };
 }
@@ -532,8 +602,11 @@ function staticSelectBlock(
   ids: { blockId: string; actionId: string },
   label: string,
   placeholder: string,
-  options: Array<Record<string, unknown>>
+  options: Array<Record<string, unknown>>,
+  initialValue?: string
 ): Record<string, unknown> {
+  const initialOption = optionWithValue(options, initialValue);
+
   return {
     type: "input",
     block_id: ids.blockId,
@@ -542,32 +615,39 @@ function staticSelectBlock(
       type: "static_select",
       action_id: ids.actionId,
       placeholder: { type: "plain_text", text: placeholder, emoji: true },
-      options
+      options,
+      ...(initialOption ? { initial_option: initialOption } : {})
     }
   };
 }
 
 function datePickerElement(
   ids: { actionId: string },
-  placeholder: string
+  placeholder: string,
+  initialDate?: string
 ): Record<string, unknown> {
   return {
     type: "datepicker",
     action_id: ids.actionId,
-    placeholder: { type: "plain_text", text: placeholder, emoji: true }
+    placeholder: { type: "plain_text", text: placeholder, emoji: true },
+    ...(initialDate ? { initial_date: initialDate } : {})
   };
 }
 
 function staticSelectElement(
   ids: { actionId: string },
   placeholder: string,
-  options: Array<Record<string, unknown>>
+  options: Array<Record<string, unknown>>,
+  initialValue?: string
 ): Record<string, unknown> {
+  const initialOption = optionWithValue(options, initialValue);
+
   return {
     type: "static_select",
     action_id: ids.actionId,
     placeholder: { type: "plain_text", text: placeholder, emoji: true },
-    options
+    options,
+    ...(initialOption ? { initial_option: initialOption } : {})
   };
 }
 
@@ -576,6 +656,17 @@ function option(text: string, value: string): Record<string, unknown> {
     text: { type: "plain_text", text, emoji: true },
     value
   };
+}
+
+function optionWithValue(
+  options: Array<Record<string, unknown>>,
+  value: string | undefined
+): Record<string, unknown> | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return options.find((option) => option.value === value);
 }
 
 function renderParticipantGroups(meeting: Meeting): string {
@@ -607,6 +698,10 @@ function markdownField(text: string): Record<string, unknown> {
   return { type: "mrkdwn", text };
 }
 
+function emphasizedValue(value: string): string {
+  return `*[${value}]*`;
+}
+
 function section(text: string): Record<string, unknown> {
   return {
     type: "section",
@@ -625,4 +720,36 @@ function shortDate(iso: string): string {
     timeStyle: "short",
     timeZone: "Asia/Seoul"
   }).format(new Date(iso));
+}
+
+function createMeetingFormDefaults(
+  options: CreateMeetingFormOptions
+): CreateMeetingFormDefaults {
+  if (!options.now) {
+    return {};
+  }
+
+  const localDate = dateStringInOffset(
+    options.now,
+    options.timezoneOffset ?? "+09:00"
+  );
+  return {
+    meetingDate: localDate,
+    deadlineDate: localDate
+  };
+}
+
+function dateStringInOffset(date: Date, timezoneOffset: string): string {
+  const match = /^([+-])(\d{2}):(\d{2})$/.exec(timezoneOffset);
+  if (!match) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  const [, sign, hours, minutes] = match;
+  const direction = sign === "-" ? -1 : 1;
+  const offsetMinutes =
+    direction * (Number.parseInt(hours, 10) * 60 + Number.parseInt(minutes, 10));
+  return new Date(date.getTime() + offsetMinutes * 60_000)
+    .toISOString()
+    .slice(0, 10);
 }

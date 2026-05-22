@@ -82,7 +82,11 @@ export function createSlackHandlers(deps: SlackHandlersDependencies) {
     const meetings = await deps.service.listMeetingsForCreator(userId);
     await client.views.publish({
       user_id: userId,
-      view: buildHomeView(userId, meetings, options)
+      view: buildHomeView(userId, meetings, {
+        ...options,
+        now: deps.clock.now(),
+        timezoneOffset
+      })
     });
   };
 
@@ -95,10 +99,14 @@ export function createSlackHandlers(deps: SlackHandlersDependencies) {
       await args.ack();
       await args.client.views.open({
         trigger_id: args.command.trigger_id,
-        view: buildCreateMeetingModal({
-          sourceChannelId: args.command.channel_id,
-          creatorUserId: args.command.user_id
-        })
+        view: buildCreateMeetingModal(
+          {
+            sourceChannelId: args.command.channel_id,
+            creatorUserId: args.command.user_id
+          },
+          deps.clock.now(),
+          timezoneOffset
+        )
       });
     },
 
@@ -117,10 +125,14 @@ export function createSlackHandlers(deps: SlackHandlersDependencies) {
       await args.ack();
       await args.client.views.open({
         trigger_id: args.body.trigger_id,
-        view: buildCreateMeetingModal({
-          sourceChannelId: APP_HOME_SOURCE_CHANNEL_ID,
-          creatorUserId: args.body.user.id
-        })
+        view: buildCreateMeetingModal(
+          {
+            sourceChannelId: APP_HOME_SOURCE_CHANNEL_ID,
+            creatorUserId: args.body.user.id
+          },
+          deps.clock.now(),
+          timezoneOffset
+        )
       });
     },
 
@@ -205,7 +217,7 @@ export function createSlackHandlers(deps: SlackHandlersDependencies) {
         return;
       }
 
-      await updateAnnouncement(args.client, result.meeting);
+      await updateAnnouncement(args.client, result.meeting, args.body.user.id);
       if (participantStatus && result.participantStatusChange?.changed) {
         await postParticipantThreadNudge(
           args.client,
@@ -290,7 +302,8 @@ export function createSlackHandlers(deps: SlackHandlersDependencies) {
 
 export async function updateAnnouncement(
   client: UpdateMessageClient,
-  meeting: Meeting
+  meeting: Meeting,
+  selectedUserId?: string
 ): Promise<void> {
   if (!meeting.announcementMessageTs) {
     return;
@@ -300,7 +313,7 @@ export async function updateAnnouncement(
     await client.chat.update({
       channel: meeting.announcementChannelId,
       ts: meeting.announcementMessageTs,
-      ...buildAnnouncementMessage(meeting)
+      ...buildAnnouncementMessage(meeting, { selectedUserId })
     });
   } catch (error) {
     console.error("GMG announcement update failed", error);
@@ -490,8 +503,15 @@ function parseCreateMeetingView(
       minuteIds: CREATE_MODAL_FIELD_IDS.meetingMinute
     }
   ]);
-  const capacityMode = selectedOptionValue(values, CREATE_MODAL_FIELD_IDS.capacityMode);
-  const capacityRaw = textValue(values, CREATE_MODAL_FIELD_IDS.capacity);
+  const capacityMode = selectedOptionValueFrom(values, [
+    CREATE_HOME_FIELD_IDS.capacityMode,
+    CREATE_MODAL_FIELD_IDS.capacityMode
+  ]);
+  const capacityRaw =
+    selectedOptionValueFrom(values, [
+      CREATE_HOME_FIELD_IDS.capacity,
+      CREATE_MODAL_FIELD_IDS.capacity
+    ]) ?? textValue(values, CREATE_MODAL_FIELD_IDS.capacity);
   const deadlineDate = selectedDateFrom(values, [
     CREATE_HOME_FIELD_IDS.deadlineDate,
     CREATE_MODAL_FIELD_IDS.deadlineDate
@@ -587,10 +607,14 @@ function parseCreateMeetingView(
   };
 }
 
-function buildCreateMeetingModal(input: {
-  sourceChannelId: string;
-  creatorUserId: string;
-}): Record<string, unknown> {
+function buildCreateMeetingModal(
+  input: {
+    sourceChannelId: string;
+    creatorUserId: string;
+  },
+  now: Date,
+  timezoneOffset: string
+): Record<string, unknown> {
   return {
     type: "modal",
     callback_id: CREATE_MODAL_CALLBACK_ID,
@@ -598,7 +622,7 @@ function buildCreateMeetingModal(input: {
     submit: { type: "plain_text", text: "공지", emoji: true },
     close: { type: "plain_text", text: "취소", emoji: true },
     private_metadata: JSON.stringify(input),
-    blocks: buildCreateMeetingFormBlocks()
+    blocks: buildCreateMeetingFormBlocks({ now, timezoneOffset })
   };
 }
 
@@ -716,6 +740,19 @@ function selectedOptionValue(
 ): string | undefined {
   const value = values[ids.blockId]?.[ids.actionId]?.selected_option?.value;
   return typeof value === "string" ? value : undefined;
+}
+
+function selectedOptionValueFrom(
+  values: SlackViewSubmission["state"]["values"],
+  candidates: Array<{ blockId: string; actionId: string }>
+): string | undefined {
+  for (const ids of candidates) {
+    const value = selectedOptionValue(values, ids);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function isHourValue(value: string): boolean {
